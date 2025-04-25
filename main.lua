@@ -162,19 +162,40 @@ local Window = Fluent:CreateWindow({
     MinimizeKey = Enum.KeyCode.End
 })
 
+-- Debug: Confirm window creation
+print("Window created:", Window)
+
+-- Create tabs without icons to avoid potential rendering issues
 local Tabs = {
-    Main = Window:AddTab({ Title = "Main", Icon = "rbxassetid://18901165922" }),
-    Stats = Window:AddTab({ Title = "Stats", Icon = "rbxassetid://18901165922" }),
-    Settings = Window:AddTab({ Title = "Settings", Icon = "rbxassetid://18901165922" })
+    Main = Window:AddTab({ Title = "Main" }),
+    Stats = Window:AddTab({ Title = "Stats" }),
+    Settings = Window:AddTab({ Title = "Settings" })
 }
 
--- Main Tab
-Tabs.Main:AddParagraph({
+-- Debug: Confirm tab creation
+print("Tabs created:", Tabs.Main, Tabs.Stats, Tabs.Settings)
+
+-- Function to safely add UI elements with error handling
+local function safeAddElement(tab, method, key, options)
+    local success, result = pcall(function()
+        return tab[method](tab, key, options)
+    end)
+    if success then
+        print("Added " .. method .. " '" .. key .. "' to tab " .. tab.Title)
+        return result
+    else
+        warn("Failed to add " .. method .. " '" .. key .. "' to tab " .. tab.Title .. ": " .. result)
+        return nil
+    end
+end
+
+-- Main Tab: Start with a simple paragraph
+safeAddElement(Tabs.Main, "AddParagraph", "AutomationFeatures", {
     Title = "Automation Features 🎮",
     Content = "Enable auto-features to farm bubbles and hatch eggs effortlessly!"
 })
 
-local AutoBubbleToggle = Tabs.Main:AddToggle("AutoBubble", {
+safeAddElement(Tabs.Main, "AddToggle", "AutoBubble", {
     Title = "Auto Bubble 🌬️",
     Default = false,
     Callback = function(value)
@@ -188,7 +209,7 @@ local AutoBubbleToggle = Tabs.Main:AddToggle("AutoBubble", {
     end
 })
 
-local AutoHatchToggle = Tabs.Main:AddToggle("AutoHatch", {
+safeAddElement(Tabs.Main, "AddToggle", "AutoHatch", {
     Title = "Auto Hatch 🥚",
     Default = false,
     Callback = function(value)
@@ -202,7 +223,7 @@ local AutoHatchToggle = Tabs.Main:AddToggle("AutoHatch", {
     end
 })
 
-local AreaDropdown = Tabs.Main:AddDropdown("AreaTeleport", {
+safeAddElement(Tabs.Main, "AddDropdown", "AreaTeleport", {
     Title = "Teleport to Area 🚀",
     Values = {"Spawn", "CandyLand", "ToyLand"},
     Multi = false,
@@ -213,12 +234,12 @@ local AreaDropdown = Tabs.Main:AddDropdown("AreaTeleport", {
 })
 
 -- Stats Tab
-Tabs.Stats:AddParagraph({
+safeAddElement(Tabs.Stats, "AddParagraph", "PlayerStats", {
     Title = "Player Stats 📊",
     Content = "Monitor your in-game progress."
 })
 
-Tabs.Stats:AddButton({
+safeAddElement(Tabs.Stats, "AddButton", "RefreshStats", {
     Title = "Refresh Stats 🔄",
     Callback = function()
         Fluent:Notify({
@@ -230,12 +251,12 @@ Tabs.Stats:AddButton({
 })
 
 -- Settings Tab
-Tabs.Settings:AddParagraph({
+safeAddElement(Tabs.Settings, "AddParagraph", "SettingsInfo", {
     Title = "Settings ⚙️",
     Content = "Customize your script experience."
 })
 
-Tabs.Settings:AddKeybind("ToggleUI", {
+safeAddElement(Tabs.Settings, "AddKeybind", "ToggleUI", {
     Title = "Toggle UI Keybind",
     Default = "End",
     Callback = function()
@@ -245,16 +266,26 @@ Tabs.Settings:AddKeybind("ToggleUI", {
 
 -- Initialize SaveManager and InterfaceManager if they loaded
 if SaveManager then
-    SaveManager:SetLibrary(Fluent)
-    SaveManager:IgnoreThemeSettings()
-    SaveManager:SetFolder("BubbleGumSimulatorInfinity")
-    SaveManager:BuildConfigSection(Tabs.Settings)
-    SaveManager:LoadAutoloadConfig()
+    local success, err = pcall(function()
+        SaveManager:SetLibrary(Fluent)
+        SaveManager:IgnoreThemeSettings()
+        SaveManager:SetFolder("BubbleGumSimulatorInfinity")
+        SaveManager:BuildConfigSection(Tabs.Settings)
+        SaveManager:LoadAutoloadConfig()
+    end)
+    if not success then
+        warn("Failed to initialize SaveManager: " .. err)
+    end
 end
 
 if InterfaceManager then
-    InterfaceManager:SetLibrary(Fluent)
-    InterfaceManager:BuildThemeSection(Tabs.Settings)
+    local success, err = pcall(function()
+        InterfaceManager:SetLibrary(Fluent)
+        InterfaceManager:BuildThemeSection(Tabs.Settings)
+    end)
+    if not success then
+        warn("Failed to initialize InterfaceManager: " .. err)
+    end
 end
 
 -- Select Main Tab
