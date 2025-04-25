@@ -1,156 +1,268 @@
--- Main.lua: Inlined script for emulator compatibility
--- Removed key system and local require statements
-
--- Inline Signal.lua (simplified for events)
-local Signal = {}
-function Signal.new()
-    local self = { _bindings = {} }
-    function self:Connect(callback)
-        table.insert(self._bindings, callback)
-        return { Disconnect = function() self._bindings[callback] = nil end }
+-- Function to safely load a remote script
+local function safeLoadstring(url)
+    local success, result = pcall(function()
+        return game:HttpGet(url)
+    end)
+    if not success then
+        warn("Failed to fetch script from " .. url .. ": " .. result)
+        return nil
     end
-    function self:Fire(...)
-        for _, callback in ipairs(self._bindings) do
-            callback(...)
-        end
+    local func, err = loadstring(result)
+    if not func then
+        warn("Failed to loadstring script from " .. url .. ": " .. err)
+        return nil
     end
-    return self
+    return func
 end
 
--- Inline Trove.lua (simplified for cleanup)
+-- Load dependencies with error handling
+local Fluent
+local SaveManager
+local InterfaceManager
+
+local fluentFunc = safeLoadstring("https://raw.githubusercontent.com/0vma/Strelizia/refs/heads/main/Fluent.luau")
+if fluentFunc then
+    Fluent = fluentFunc()
+else
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Error",
+        Text = "Failed to load Fluent UI library. Check your network or the URL.",
+        Duration = 10
+    })
+    return
+end
+
+local saveManagerFunc = safeLoadstring("https://raw.githubusercontent.com/0vma/Strelizia/refs/heads/main/Dependencies/UILibrary/Fluent/SaveManager.lua")
+if saveManagerFunc then
+    SaveManager = saveManagerFunc()
+else
+    Fluent:Notify({
+        Title = "Error",
+        Content = "Failed to load SaveManager. Some features may not work.",
+        Duration = 10
+    })
+end
+
+local themeManagerFunc = safeLoadstring("https://raw.githubusercontent.com/0vma/Strelizia/refs/heads/main/Dependencies/UILibrary/Fluent/ThemeManager.lua")
+if themeManagerFunc then
+    InterfaceManager = themeManagerFunc()
+else
+    Fluent:Notify({
+        Title = "Error",
+        Content = "Failed to load ThemeManager. Some features may not work.",
+        Duration = 10
+    })
+end
+
+-- Simplified Trove module for cleanup
 local Trove = {}
+Trove.__index = Trove
 function Trove.new()
-    local self = { _objects = {} }
-    function self:Add(object)
-        table.insert(self._objects, object)
-        return object
-    end
-    function self:Clean()
-        for _, object in ipairs(self._objects) do
-            if typeof(object) == "RBXScriptConnection" then
-                object:Disconnect()
-            end
+    return setmetatable({ _objects = {} }, Trove)
+end
+function Trove:Add(object)
+    table.insert(self._objects, object)
+    return object
+end
+function Trove:Clean()
+    for _, object in ipairs(self._objects) do
+        if typeof(object) == "RBXScriptConnection" then
+            object:Disconnect()
+        elseif typeof(object) == "Instance" then
+            object:Destroy()
         end
-        self._objects = {}
     end
-    return self
+    self._objects = {}
 end
 
--- Inline Dependencies/UILibrary/Fluent/ThemeManager.lua (simplified)
-local ThemeManager = {
-    BuiltInThemes = {
-        Dark = { AccentColor = Color3.fromRGB(255, 255, 255) },
-        Light = { AccentColor = Color3.fromRGB(0, 0, 0) }
-    },
-    Theme = "Dark",
-    ThemeChanged = Signal.new()
-}
-function ThemeManager:SetTheme(theme)
-    ThemeManager.Theme = theme
-    ThemeManager.ThemeChanged:Fire()
+-- Simplified Signal module
+local Signal = {}
+Signal.__index = Signal
+function Signal.new()
+    return setmetatable({ _handlers = {} }, Signal)
+end
+function Signal:Connect(handler)
+    table.insert(self._handlers, handler)
+    return { Disconnect = function() table.remove(self._handlers, table.find(self._handlers, handler)) end }
+end
+function Signal:Fire(...)
+    for _, handler in ipairs(self._handlers) do
+        handler(...)
+    end
 end
 
--- Inline Dependencies/UILibrary/Fluent/SaveManager.lua (simplified)
-local SaveManager = {}
-function SaveManager:LoadAutoloadConfig() end
-function SaveManager:BuildConfigSection() end
+-- Game-specific functions
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
 
--- Inline Dependencies/UILibrary/Fluent/Main.lua (simplified Fluent UI library)
-local Fluent = {}
-Fluent.InterfaceOptions = { Theme = "Dark" }
-Fluent.Options = {}
+local function autoBubble()
+    local trove = Trove.new()
+    local signal = Signal.new()
+    local isRunning = false
 
-function Fluent:CreateWindow(options)
-    local window = { Tabs = {}, Trove = Trove.new() }
-    function window:CreateTab(tabOptions)
-        local tab = { Elements = {} }
-        function tab:CreateButton(buttonOptions)
-            print("Button created:", buttonOptions.Name)
-            local button = { Clicked = Signal.new() }
-            if buttonOptions.Callback then
-                button.Clicked:Connect(buttonOptions.Callback)
-            end
-            return button
+    local function blowBubble()
+        if isRunning then
+            ReplicatedStorage:WaitForChild("Events"):WaitForChild("BlowBubble"):FireServer()
         end
-        function tab:CreateToggle(toggleOptions)
-            print("Toggle created:", toggleOptions.Name)
-            Fluent.Options[toggleOptions.Name] = { Value = false }
-            if toggleOptions.Callback then
-                toggleOptions.Callback(Fluent.Options[toggleOptions.Name].Value)
-            end
-            return Fluent.Options[toggleOptions.Name]
+    end
+
+    trove:Add(signal:Connect(blowBubble))
+    trove:Add(game:GetService("RunService").Heartbeat:Connect(function()
+        if isRunning then
+            signal:Fire()
         end
-        table.insert(window.Tabs, tab)
-        return tab
-    end
-    function window:CreateNotification(notificationOptions)
-        print("Notification:", notificationOptions.Title, notificationOptions.Content)
-    end
-    return window
+    end))
+
+    return {
+        Start = function() isRunning = true end,
+        Stop = function() isRunning = false end,
+        Destroy = function() trove:Clean() end
+    }
 end
 
-function Fluent:Notify(options)
-    print("Notify:", options.Title, options.Content)
+local function autoHatch(eggType)
+    local trove = Trove.new()
+    local isRunning = false
+
+    local function hatchEgg()
+        if isRunning then
+            ReplicatedStorage:WaitForChild("Events"):WaitForChild("HatchEgg"):FireServer(eggType)
+        end
+    end
+
+    trove:Add(game:GetService("RunService").Heartbeat:Connect(function()
+        if isRunning then
+            hatchEgg()
+        end
+    end))
+
+    return {
+        Start = function() isRunning = true end,
+        Stop = function() isRunning = false end,
+        Destroy = function() trove:Clean() end
+    }
 end
 
--- Inline Dependencies/MobileHelper.lua (mocked)
-local MobileHelper = {}
-function MobileHelper:CreateMobileButton() end
+local function teleportToArea(areaName)
+    local area = game:GetService("Workspace"):FindFirstChild("Areas"):FindFirstChild(areaName)
+    if area and LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart then
+        LocalPlayer.Character.HumanoidRootPart.CFrame = area.CFrame + Vector3.new(0, 5, 0)
+    end
+end
 
--- Inline Games/116605585218149/Modules/Emojis.lua (simplified)
-local Emojis = {
-    ["Happy"] = "😊",
-    ["Sad"] = "😢"
-}
-
--- Inline Fluent.luau (main exploit script, modified to remove requires)
+-- UI Setup
 local Window = Fluent:CreateWindow({
-    Title = "Bubble Gum Simulator Infinity",
-    SubTitle = "by 0vma",
+    Title = "Bubble Gum Simulator Infinity 🌟",
+    SubTitle = "by YourName",
     TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
+    Size = UDim2.new(0, 580, 0, 460),
     Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.RightControl
+    Acrylic = true,
+    MinimizeKey = Enum.KeyCode.End
 })
 
 local Tabs = {
-    Main = Window:CreateTab({
-        Name = "Main",
-        Icon = "rbxassetid://6026568198"
-    })
+    Main = Window:AddTab({ Title = "Main", Icon = "rbxassetid://18901165922" }),
+    Stats = Window:AddTab({ Title = "Stats", Icon = "rbxassetid://18901165922" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "rbxassetid://18901165922" })
 }
 
--- Sample exploit feature (mocked for simplicity)
-Tabs.Main:CreateButton({
-    Name = "Auto Farm",
-    Callback = function()
-        print("Auto Farm activated!")
-    end
+-- Main Tab
+Tabs.Main:AddParagraph({
+    Title = "Automation Features 🎮",
+    Content = "Enable auto-features to farm bubbles and hatch eggs effortlessly!"
 })
 
-Tabs.Main:CreateToggle({
-    Name = "Auto Click",
+local AutoBubbleToggle = Tabs.Main:AddToggle("AutoBubble", {
+    Title = "Auto Bubble 🌬️",
+    Default = false,
     Callback = function(value)
-        print("Auto Click set to:", value)
+        local auto = autoBubble()
+        if value then
+            auto:Start()
+        else
+            auto:Stop()
+            auto:Destroy()
+        end
     end
 })
 
--- Notify on load
-Fluent:Notify({
-    Title = "Script Loaded",
-    Content = "Bubble Gum Simulator Infinity exploit loaded successfully!"
+local AutoHatchToggle = Tabs.Main:AddToggle("AutoHatch", {
+    Title = "Auto Hatch 🥚",
+    Default = false,
+    Callback = function(value)
+        local auto = autoHatch("BasicEgg")
+        if value then
+            auto:Start()
+        else
+            auto:Stop()
+            auto:Destroy()
+        end
+    end
 })
 
--- Load game-specific features (mocked)
-local GameId = game.PlaceId
-if GameId == 116605585218149 then
-    print("Loaded emojis for game 116605585218149:", Emojis["Happy"])
-elseif GameId == 18901165922 then
-    print("Loaded emojis for game 18901165922:", Emojis["Sad"])
+local AreaDropdown = Tabs.Main:AddDropdown("AreaTeleport", {
+    Title = "Teleport to Area 🚀",
+    Values = {"Spawn", "CandyLand", "ToyLand"},
+    Multi = false,
+    Default = "Spawn",
+    Callback = function(value)
+        teleportToArea(value)
+    end
+})
+
+-- Stats Tab
+Tabs.Stats:AddParagraph({
+    Title = "Player Stats 📊",
+    Content = "Monitor your in-game progress."
+})
+
+Tabs.Stats:AddButton({
+    Title = "Refresh Stats 🔄",
+    Callback = function()
+        Fluent:Notify({
+            Title = "Stats Updated",
+            Content = "Bubbles: " .. (LocalPlayer.leaderstats.Bubbles.Value or 0) .. "\nGems: " .. (LocalPlayer.leaderstats.Gems.Value or 0),
+            Duration = 5
+        })
+    end
+})
+
+-- Settings Tab
+Tabs.Settings:AddParagraph({
+    Title = "Settings ⚙️",
+    Content = "Customize your script experience."
+})
+
+Tabs.Settings:AddKeybind("ToggleUI", {
+    Title = "Toggle UI Keybind",
+    Default = "End",
+    Callback = function()
+        Window:Toggle()
+    end
+})
+
+-- Initialize SaveManager and InterfaceManager if they loaded
+if SaveManager then
+    SaveManager:SetLibrary(Fluent)
+    SaveManager:IgnoreThemeSettings()
+    SaveManager:SetFolder("BubbleGumSimulatorInfinity")
+    SaveManager:BuildConfigSection(Tabs.Settings)
+    SaveManager:LoadAutoloadConfig()
 end
 
--- Mock SaveManager and ThemeManager loading
-SaveManager:LoadAutoloadConfig()
-ThemeManager:SetTheme(Fluent.InterfaceOptions.Theme)
+if InterfaceManager then
+    InterfaceManager:SetLibrary(Fluent)
+    InterfaceManager:BuildThemeSection(Tabs.Settings)
+end
 
-print("Exploit script fully loaded!")
+-- Select Main Tab
+Window:SelectTab(1)
+
+-- Notify user
+Fluent:Notify({
+    Title = "Script Loaded 🎉",
+    Content = "Bubble Gum Simulator Infinity script is ready! Use the UI to control features.",
+    Duration = 8
+})
