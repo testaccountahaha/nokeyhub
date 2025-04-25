@@ -165,18 +165,41 @@ local Window = Fluent:CreateWindow({
 -- Debug: Confirm window creation
 print("Window created:", Window)
 
--- Create tabs without icons to avoid potential rendering issues
-local Tabs = {
-    Main = Window:AddTab({ Title = "Main" }),
-    Stats = Window:AddTab({ Title = "Stats" }),
-    Settings = Window:AddTab({ Title = "Settings" })
-}
+-- Create tabs with additional error handling
+local Tabs = {}
+local function safeAddTab(name)
+    local success, tab = pcall(function()
+        return Window:AddTab({ Title = name })
+    end)
+    if success and tab then
+        print("Successfully created tab: " .. name)
+        return tab
+    else
+        warn("Failed to create tab: " .. name .. (success and "" or " - " .. tab))
+        return nil
+    end
+end
 
--- Debug: Confirm tab creation
-print("Tabs created:", Tabs.Main, Tabs.Stats, Tabs.Settings)
+Tabs.Main = safeAddTab("Main")
+Tabs.Stats = safeAddTab("Stats")
+Tabs.Settings = safeAddTab("Settings")
+
+-- Check if tabs were created successfully
+if not Tabs.Main or not Tabs.Stats or not Tabs.Settings then
+    Fluent:Notify({
+        Title = "Error",
+        Content = "Failed to create one or more tabs. Check the console for details.",
+        Duration = 10
+    })
+    return
+end
 
 -- Function to safely add UI elements with error handling
 local function safeAddElement(tab, method, key, options)
+    if not tab then
+        warn("Cannot add element '" .. key .. "' - tab is nil")
+        return nil
+    end
     local success, result = pcall(function()
         return tab[method](tab, key, options)
     end)
